@@ -1,0 +1,228 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id            String   @id @default(uuid())
+  name          String
+  email         String   @unique
+  phone         String?
+  passwordHash  String
+  role          String   @default("BENEFICIARY") // BENEFICIARY | LOAN_OFFICER | ADMIN
+  profileImage  String?
+  address       String?
+  district      String?
+  state         String?
+  pincode       String?
+  aadhaarNumber String?
+  isVerified    Boolean  @default(false)
+  isActive      Boolean  @default(true)
+  lastLoginAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  loans             Loan[]         @relation("BorrowerLoans")
+  officerLoans      Loan[]         @relation("OfficerLoans")
+  uploads           Upload[]
+  verifications     Verification[] @relation("OfficerVerifications")
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+  officerComments   OfficerComment[]
+  generatedReports  Report[]
+
+  @@map("users")
+}
+
+model Loan {
+  id            String     @id @default(uuid())
+  loanNumber    String     @unique
+  borrowerId    String
+  officerId     String?
+  purpose       String
+  amount        Float
+  status        String     @default("PENDING") // PENDING | ACTIVE | VERIFIED | REJECTED | CLOSED
+  loanType      String     // AGRICULTURAL | MACHINERY | VEHICLE | BUSINESS | INFRASTRUCTURE | LIVESTOCK | CONSTRUCTION | EDUCATION | PERSONAL
+  sanctionDate  DateTime?
+  dueDate       DateTime?
+  bankName      String?
+  branchName    String?
+  notes         String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  borrower      User       @relation("BorrowerLoans", fields: [borrowerId], references: [id], onDelete: Cascade)
+  officer       User?      @relation("OfficerLoans", fields: [officerId], references: [id])
+  uploads       Upload[]
+  verifications Verification[]
+  reports       Report[]
+
+  @@map("loans")
+}
+
+model Upload {
+  id           String     @id @default(uuid())
+  loanId       String
+  userId       String
+  fileUrl      String
+  thumbnailUrl String?
+  fileType     String     // IMAGE | VIDEO
+  mimeType     String
+  fileSize     Int
+  fileName     String
+  gpsLat       Float?
+  gpsLng       Float?
+  gpsAlt       Float?
+  gpsAccuracy  Float?
+  deviceInfo   String?    // JSON stringified for SQLite
+  capturedAt   DateTime?
+  ipAddress    String?
+  userAgent    String?
+  createdAt    DateTime   @default(now())
+
+  loan         Loan       @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  user         User       @relation(fields: [userId], references: [id])
+  verification Verification?
+  location     Location?
+
+  @@map("uploads")
+}
+
+model Verification {
+  id              String             @id @default(uuid())
+  uploadId        String             @unique
+  loanId          String
+  officerId       String?
+  status          String             @default("PENDING") // PENDING | PROCESSING | AI_COMPLETE | UNDER_REVIEW | APPROVED | REJECTED | MORE_EVIDENCE_REQUIRED
+  officerComment  String?
+  processedAt     DateTime?
+  decidedAt       DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  upload          Upload             @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  loan            Loan               @relation(fields: [loanId], references: [id])
+  officer         User?              @relation("OfficerVerifications", fields: [officerId], references: [id])
+  aiResult        AiResult?
+  report          Report?
+  officerComments OfficerComment[]
+
+  @@map("verifications")
+}
+
+model AiResult {
+  id                String    @id @default(uuid())
+  verificationId    String    @unique
+  detectedObjects   String    // JSON array stringified for SQLite
+  fraudFlags        String    // JSON array stringified for SQLite
+  duplicateScore    Float     @default(0)
+  imageQualityScore Float     @default(0)
+  metadataValid     Boolean   @default(false)
+  gpsValid          Boolean   @default(false)
+  timestampValid    Boolean   @default(false)
+  assetMatchScore   Float     @default(0)
+  riskScore         Int       @default(0)
+  riskLevel         String    @default("LOW") // LOW | MEDIUM | HIGH | CRITICAL
+  explanation       String?
+  rawResponse       String?   // JSON stringified
+  processedAt       DateTime  @default(now())
+
+  verification      Verification @relation(fields: [verificationId], references: [id], onDelete: Cascade)
+
+  @@map("ai_results")
+}
+
+model Location {
+  id                    String  @id @default(uuid())
+  uploadId              String  @unique
+  lat                   Float
+  lng                   Float
+  address               String?
+  district              String?
+  state                 String?
+  pincode               String?
+  matchesBorrowerAddress Boolean @default(false)
+  distanceKm            Float?
+  createdAt             DateTime @default(now())
+
+  upload                Upload  @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+
+  @@map("locations")
+}
+
+model Report {
+  id               String   @id @default(uuid())
+  loanId           String
+  verificationId   String?  @unique
+  generatedById    String
+  pdfUrl           String?
+  qrCode           String?
+  digitalSignature String?
+  createdAt        DateTime @default(now())
+
+  loan             Loan     @relation(fields: [loanId], references: [id])
+  verification     Verification? @relation(fields: [verificationId], references: [id])
+  generatedBy      User     @relation(fields: [generatedById], references: [id])
+
+  @@map("reports")
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  type      String           // UPLOAD_RECEIVED | AI_COMPLETE | VERIFICATION_APPROVED | VERIFICATION_REJECTED | MORE_EVIDENCE_REQUIRED | SYSTEM | ALERT
+  title     String
+  message   String
+  isRead    Boolean          @default(false)
+  metadata  String?          // JSON stringified for SQLite
+  createdAt DateTime         @default(now())
+
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model AuditLog {
+  id         String      @id @default(uuid())
+  userId     String?
+  action     String      // LOGIN | LOGOUT | REGISTER | UPLOAD | APPROVAL | REJECTION | DOWNLOAD | AI_PROCESSING | LOCATION_ACCESS | USER_CREATED | USER_UPDATED | USER_DELETED | LOAN_CREATED | LOAN_UPDATED | REPORT_GENERATED | SETTINGS_CHANGED
+  entityType String?
+  entityId   String?
+  ipAddress  String?
+  userAgent  String?
+  metadata   String?     // JSON stringified for SQLite
+  createdAt  DateTime    @default(now())
+
+  user       User?       @relation(fields: [userId], references: [id])
+
+  @@map("audit_logs")
+}
+
+model OfficerComment {
+  id             String   @id @default(uuid())
+  verificationId String
+  officerId      String
+  comment        String
+  createdAt      DateTime @default(now())
+
+  verification   Verification @relation(fields: [verificationId], references: [id], onDelete: Cascade)
+  officer        User         @relation(fields: [officerId], references: [id])
+
+  @@map("officer_comments")
+}
+
+model OtpToken {
+  id        String   @id @default(uuid())
+  email     String
+  otp       String
+  type      String   // VERIFY_EMAIL | RESET_PASSWORD
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@map("otp_tokens")
+}
